@@ -206,12 +206,26 @@ export default function Home() {
     } catch (_) { showToast('Error al cambiar estado'); }
   };
 
-  // Export
+  // Export helper: hide interactive elements before capture
+  const captureCatalog = async (): Promise<HTMLCanvasElement | null> => {
+    if (!catalogRef.current) return null;
+    // Inject CSS to hide app-only elements during capture
+    const style = document.createElement('style');
+    style.id = 'export-hide';
+    style.textContent = '.no-export { display: none !important; }';
+    document.head.appendChild(style);
+    // Small delay to let CSS apply
+    await new Promise(r => setTimeout(r, 100));
+    const { default: html2canvas } = await import('html2canvas-pro' as any);
+    const c = await html2canvas(catalogRef.current, { backgroundColor: '#000', scale: 2 });
+    document.head.removeChild(style);
+    return c;
+  };
+
   const exportPNG = async () => {
-    if (!catalogRef.current) return;
     try {
-      const { default: html2canvas } = await import('html2canvas-pro' as any);
-      const c = await html2canvas(catalogRef.current, { backgroundColor: '#000', scale: 2 });
+      const c = await captureCatalog();
+      if (!c) return;
       const a = document.createElement('a');
       a.download = 'HD-Vision-catalogo.png';
       a.href = c.toDataURL('image/png');
@@ -221,11 +235,10 @@ export default function Home() {
   };
 
   const exportPDF = async () => {
-    if (!catalogRef.current) return;
     try {
-      const { default: html2canvas } = await import('html2canvas-pro' as any);
+      const c = await captureCatalog();
+      if (!c) return;
       const { jsPDF } = await import('jspdf' as any);
-      const c = await html2canvas(catalogRef.current, { backgroundColor: '#000', scale: 2 });
       const img = c.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
       const w = 210; const h = (c.height * w) / c.width;
@@ -239,7 +252,7 @@ export default function Home() {
     const catalogs = getCatalogs();
     const sel = catalogs.find(c => c.key === selectedKey);
     if (!sel) return;
-    const text = `👓 *H&D Vision*\n\n📊 ${sel.label}\n\n${sel.products.map(p => `• ${p.code ? '[' + p.code + '] ' : ''}${p.description} - ${p.gender} - ${p.style} (${p.status})`).join('\n')}`;
+    const text = `👓 *H&D Vision*\n\n📊 ${sel.label}\n\n${sel.products.map(p => `• ${p.code ? '[' + p.code + '] ' : ''}${p.description} - ${p.gender} - ${p.style}${p.status === 'Agotado' ? ' ❌ Agotado' : ''}`).join('\n')}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
@@ -428,7 +441,7 @@ export default function Home() {
                   <div key={p.id} style={{ borderRadius: '1rem', overflow: 'hidden', border: '1px solid #1A1A1A', background: '#0A0A0A', position: 'relative' }}>
                     {/* Action buttons on each card - always visible */}
                     {editMode && (
-                      <div style={{ position: 'absolute', top: '0.4rem', right: '0.4rem', zIndex: 5, display: 'flex', gap: '0.25rem' }}>
+                      <div className="no-export" style={{ position: 'absolute', top: '0.4rem', right: '0.4rem', zIndex: 5, display: 'flex', gap: '0.25rem' }}>
                         <button onClick={() => startEdit(p)} style={{ width: '2rem', height: '2rem', borderRadius: '50%', background: '#D4AF37', border: 'none', cursor: 'pointer', fontSize: '0.65rem', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>✏️</button>
                         <button onClick={() => deleteProduct(p.id)} style={{ width: '2rem', height: '2rem', borderRadius: '50%', background: '#B91C1C', border: 'none', cursor: 'pointer', fontSize: '0.65rem', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>🗑️</button>
                       </div>
@@ -436,12 +449,12 @@ export default function Home() {
 
                     {/* Image with watermark */}
                     <div style={{ aspectRatio: '1', overflow: 'hidden', background: '#111', position: 'relative' }}>
-                      <img src={p.image_url} alt={p.code || p.description} style={{ width: '100%', height: '100%', objectFit: 'contain', filter: p.status === 'Agotado' ? 'grayscale(60%)' : 'none' }} />
-                      {/* AGOTADO watermark */}
+                      <img src={p.image_url} alt={p.code || p.description} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      {/* AGOTADO watermark - visible in app AND exports */}
                       {p.status === 'Agotado' && (
                         <div style={{
                           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          background: 'rgba(0,0,0,0.45)', pointerEvents: 'none'
+                          background: 'rgba(0,0,0,0.5)', pointerEvents: 'none'
                         }}>
                           <div style={{
                             transform: 'rotate(-30deg)', padding: '0.4rem 1.5rem', borderRadius: '0.5rem',
@@ -451,25 +464,42 @@ export default function Home() {
                           }}>AGOTADO</div>
                         </div>
                       )}
-                      {/* Quick agotado toggle button */}
-                      <button onClick={() => toggleStatus(p)} style={{
-                        position: 'absolute', bottom: '0.4rem', left: '0.4rem', zIndex: 3,
-                        padding: '0.25rem 0.5rem', borderRadius: '0.5rem', fontSize: '0.55rem', fontWeight: 700,
-                        border: 'none', cursor: 'pointer', letterSpacing: '0.05em',
-                        background: p.status === 'Agotado' ? 'rgba(5,150,105,0.9)' : 'rgba(185,28,28,0.85)',
-                        color: '#FFF', display: 'flex', alignItems: 'center', gap: '0.25rem',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.4)'
-                      }}>
-                        {p.status === 'Agotado' ? '🟢 DISPONIBLE' : '🔴 AGOTADO'}
-                      </button>
                     </div>
 
                     {/* Info */}
                     <div style={{ padding: '0.6rem' }}>
-                      <p style={{ fontSize: '0.7rem', fontWeight: 700, color: p.status === 'Agotado' ? '#888' : '#FFF', textTransform: 'capitalize', textDecoration: p.status === 'Agotado' ? 'line-through' : 'none' }}>
+                      <p style={{ fontSize: '0.7rem', fontWeight: 700, color: '#FFF', textTransform: 'capitalize' }}>
                         {p.code && <span style={{ color: '#D4AF37' }}>[{p.code}] </span>}{p.description}
                       </p>
                       <p style={{ fontSize: '0.6rem', color: '#888', marginTop: '0.15rem', textTransform: 'capitalize' }}>{p.gender} • {p.style}</p>
+                    </div>
+
+                    {/* Disponible / Agotado buttons - hidden in exports */}
+                    <div className="no-export" style={{ display: 'flex', gap: '0.35rem', padding: '0 0.6rem 0.6rem' }}>
+                      <button
+                        onClick={() => { if (p.status !== 'Disponible') toggleStatus(p); }}
+                        disabled={p.status === 'Disponible'}
+                        style={{
+                          flex: 1, padding: '0.45rem 0', borderRadius: '0.5rem', fontSize: '0.6rem', fontWeight: 700,
+                          border: p.status === 'Disponible' ? 'none' : '1px solid #333',
+                          background: p.status === 'Disponible' ? '#059669' : '#111',
+                          color: '#FFF', cursor: p.status === 'Disponible' ? 'default' : 'pointer',
+                          opacity: p.status === 'Disponible' ? 1 : 0.6,
+                          letterSpacing: '0.05em'
+                        }}
+                      >✅ Disponible</button>
+                      <button
+                        onClick={() => { if (p.status !== 'Agotado') toggleStatus(p); }}
+                        disabled={p.status === 'Agotado'}
+                        style={{
+                          flex: 1, padding: '0.45rem 0', borderRadius: '0.5rem', fontSize: '0.6rem', fontWeight: 700,
+                          border: p.status === 'Agotado' ? 'none' : '1px solid #333',
+                          background: p.status === 'Agotado' ? '#B91C1C' : '#111',
+                          color: '#FFF', cursor: p.status === 'Agotado' ? 'default' : 'pointer',
+                          opacity: p.status === 'Agotado' ? 1 : 0.6,
+                          letterSpacing: '0.05em'
+                        }}
+                      >❌ Agotado</button>
                     </div>
                   </div>
                 ))}
