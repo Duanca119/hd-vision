@@ -1,55 +1,66 @@
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
 
-// Cloudinary upload via REST API (no SDK needed on edge)
 async function uploadToCloudinary(file: File): Promise<string | null> {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const apiKey = process.env.CLOUDINARY_API_KEY;
   const apiSecret = process.env.CLOUDINARY_API_SECRET;
-  if (!cloudName || !apiKey || !apiSecret) return null;
+
+  console.log('Cloudinary config:', { cloudName: !!cloudName, apiKey: !!apiKey, apiSecret: !!apiSecret });
+
+  if (!cloudName || !apiKey || !apiSecret) {
+    console.error('❌ Faltan variables de Cloudinary');
+    return null;
+  }
 
   try {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('folder', 'hd-vision/products');
-    formData.append('upload_preset', 'hd-vision_unsigned');
-
-    // Intentar primero con upload preset (no necesita firma)
-    const res1 = await fetch(
-      `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-      { method: 'POST', body: formData }
-    );
-    if (res1.ok) {
-      const data = await res1.json();
-      return data.secure_url;
-    }
-
-    // Si no hay upload preset, usar firmado
-    const crypto = await import('crypto');
     const timestamp = Math.floor(Date.now() / 1000);
     const sigStr = `folder=hd-vision/products&timestamp=${timestamp}${apiSecret}`;
     const signature = crypto.createHash('sha1').update(sigStr).digest('hex');
 
-    const signedForm = new FormData();
-    signedForm.append('file', file);
-    signedForm.append('folder', 'hd-vision/products');
-    signedForm.append('timestamp', timestamp.toString());
-    signedForm.append('api_key', apiKey);
-    signedForm.append('signature', signature);
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
 
-    const res2 = await fetch(
+    // Build multipart form manually
+    const boundary = '----HDVisionBoundary' + Math.random().toString(36).substring(2);
+    const parts: Buffer[] = [];
+
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="folder"\r\n\r\nhd-vision/products\r\n`));
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="timestamp"\r\n\r\n${timestamp}\r\n`));
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="api_key"\r\n\r\n${apiKey}\r\n`));
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="signature"\r\n\r\n${signature}\r\n`));
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.name || 'image.jpg'}"\r\nContent-Type: ${file.type}\r\n\r\n`));
+    parts.push(Buffer.from(uint8Array));
+    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+    const body = Buffer.concat(parts);
+
+    const res = await fetch(
       `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
-      { method: 'POST', body: signedForm }
+      {
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+        body: body,
+      }
     );
-    if (res2.ok) {
-      const data = await res2.json();
+
+    const data = await res.json();
+    console.log('Cloudinary response status:', res.status);
+
+    if (res.ok && data.secure_url) {
+      console.log('✅ Imagen subida:', data.secure_url);
       return data.secure_url;
     }
 
+    console.error('❌ Cloudinary error:', JSON.stringify(data));
     return null;
-  } catch {
+  } catch (err: any) {
+    console.error('❌ Cloudinary exception:', err.message);
     return null;
   }
 }
+
+export const maxDuration = 30;
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,22 +78,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Intentar subir a Cloudinary
-    console.log('📤 Subiendo imagen a Cloudinary...');
     const cloudinaryUrl = await uploadToCloudinary(file);
 
     if (cloudinaryUrl) {
-      console.log('✅ Imagen subida a Cloudinary:', cloudinaryUrl);
       return NextResponse.json({ url: cloudinaryUrl, storedIn: 'cloudinary' });
     }
 
     // Fallback: base64
-    console.log('⚠️ Cloudinary no disponible, usando base64');
+    console.log('⚠️ Usando fallback base64');
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     const base64 = `data:${file.type};base64,${buffer.toString('base64')}`;
     return NextResponse.json({ url: base64, storedIn: 'base64' });
   } catch (error: any) {
     console.error('Upload error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Error al subir' }, { status: 500 });
   }
 }
