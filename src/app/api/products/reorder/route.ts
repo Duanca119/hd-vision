@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { createClient } from '@supabase/supabase-js';
 
 export async function PUT(request: NextRequest) {
   try {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
     const { updates } = await request.json();
     // updates is an array of { id, order }
     
     const operations = updates.map(({ id, order }: { id: string; order: number }) =>
-      db.product.update({ where: { id }, data: { order } })
+      supabase.from('products').update({ order }).eq('id', id)
     );
 
     await Promise.all(operations);
