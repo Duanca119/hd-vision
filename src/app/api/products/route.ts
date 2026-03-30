@@ -30,25 +30,40 @@ export async function POST(request: Request) {
     );
 
     const body = await request.json();
-    const { image_url, description, gender, style, status, code } = body;
+    const { image_url, description, gender, style, status, code, order } = body;
 
     if (!image_url || !description || !gender || !style || !status) {
       return NextResponse.json({ error: 'Campos requeridos faltantes' }, { status: 400 });
     }
 
-    const { data, error } = await supabase
+    // Try insert with code column first, fallback without it
+    const insertData: Record<string, any> = {
+      image_url,
+      description,
+      gender,
+      style,
+      status,
+    };
+    if (code) insertData.code = code;
+    if (order !== undefined) insertData.order = order;
+
+    let { data, error } = await supabase
       .from('products')
-      .insert({
-        image_url,
-        description,
-        gender,
-        style,
-        status,
-        code: code || '',
-        order: 0,
-      })
+      .insert(insertData)
       .select()
       .single();
+
+    // If code column doesn't exist, retry without it
+    if (error && error.message?.includes('code')) {
+      const { code: _c, ...rest } = insertData;
+      const retry = await supabase
+        .from('products')
+        .insert(rest)
+        .select()
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) throw error;
     return NextResponse.json(data, { status: 201 });

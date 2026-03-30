@@ -33,13 +33,26 @@ export async function PUT(
     const { id } = await params;
     const body = await request.json();
 
-    const { data, error } = await supabase
+    // Try update with all fields first, fallback without code if column missing
+    let result = await supabase
       .from('products')
       .update(body)
       .eq('id', id)
       .select()
       .single();
 
+    // If code column doesn't exist, retry without it
+    if (result.error && result.error.message?.includes('code')) {
+      const { code: _c, ...rest } = body;
+      result = await supabase
+        .from('products')
+        .update(rest)
+        .eq('id', id)
+        .select()
+        .single();
+    }
+
+    const { data, error } = result;
     if (error) throw error;
     return NextResponse.json(data);
   } catch (error: any) {
