@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hd-vision-v1';
+const CACHE_NAME = 'hd-vision-v3';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -31,18 +31,26 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
-  // Skip non-GET requests
+  // Skip non-GET requests - never cache POST/PUT/DELETE
   if (request.method !== 'GET') return;
 
-  // Skip API calls - always try network first
+  // Skip API calls - always fetch from network
   if (request.url.includes('/api/')) {
     event.respondWith(
-      fetch(request).catch(() => caches.match(request))
+      fetch(request)
     );
     return;
   }
 
-  // For static assets: cache first, then network
+  // For pages: always network first to get latest version
+  if (request.mode === 'navigate' || request.url.endsWith('/') || request.url.includes('.html') || request.url.includes('page')) {
+    event.respondWith(
+      fetch(request).catch(() => caches.match('/'))
+    );
+    return;
+  }
+
+  // For static assets: cache first
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
@@ -54,13 +62,7 @@ self.addEventListener('fetch', (event) => {
           });
         }
         return response;
-      }).catch(() => {
-        // Return offline page for navigation requests
-        if (request.mode === 'navigate') {
-          return caches.match('/');
-        }
-        return new Response('Offline', { status: 503 });
-      });
+      }).catch(() => new Response('Offline', { status: 503 }));
     })
   );
 });
