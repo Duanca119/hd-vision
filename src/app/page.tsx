@@ -242,19 +242,65 @@ export default function Home() {
     } catch (_) { showToast('Error al cambiar estado'); }
   };
 
-  // Export helper: hide interactive elements before capture
+  // Helper: convert Cloudinary URLs to local proxy URLs for html2canvas CORS
+  const getProxiedUrl = (url: string) => {
+    if (!url) return url;
+    if (url.startsWith('/api/image-proxy')) return url;
+    if (url.startsWith('data:')) return url;
+    return '/api/image-proxy?url=' + encodeURIComponent(url);
+  };
+
+  // Export helper: hide buttons + proxy images for CORS
   const captureCatalog = async (): Promise<HTMLCanvasElement | null> => {
     if (!catalogRef.current) return null;
-    // Inject CSS to hide app-only elements during capture
-    const style = document.createElement('style');
-    style.id = 'export-hide';
-    style.textContent = '.no-export { display: none !important; }';
-    document.head.appendChild(style);
-    // Small delay to let CSS apply
-    await new Promise(r => setTimeout(r, 100));
+
+    // 1. Hide all no-export elements by setting display none directly on DOM
+    const hiddenEls: { el: HTMLElement; orig: string }[] = [];
+    catalogRef.current.querySelectorAll('.no-export').forEach(el => {
+      const htmlEl = el as HTMLElement;
+      hiddenEls.push({ el: htmlEl, orig: htmlEl.style.display });
+      htmlEl.style.display = 'none';
+    });
+
+    // 2. Swap image srcs to proxied URLs for CORS
+    const imgs = catalogRef.current.querySelectorAll('img');
+    const originalSrcs: { img: HTMLImageElement; orig: string }[] = [];
+    const proxyPromises: Promise<void>[] = [];
+    imgs.forEach(img => {
+      const htmlImg = img as HTMLImageElement;
+      const originalSrc = htmlImg.src;
+      originalSrcs.push({ img: htmlImg, orig: originalSrc });
+      const proxyUrl = getProxiedUrl(originalSrc);
+      if (proxyUrl !== originalSrc) {
+        const p = new Promise<void>((resolve) => {
+          const testImg = new Image();
+          testImg.crossOrigin = 'anonymous';
+          testImg.onload = () => { htmlImg.src = proxyUrl; resolve(); };
+          testImg.onerror = () => { resolve(); };
+          testImg.src = proxyUrl;
+        });
+        proxyPromises.push(p);
+      }
+    });
+
+    // Wait for all proxy images to load
+    await Promise.all(proxyPromises);
+    await new Promise(r => setTimeout(r, 300));
+
+    // 3. Capture with CORS settings
     const { default: html2canvas } = await import('html2canvas-pro' as any);
-    const c = await html2canvas(catalogRef.current, { backgroundColor: '#000', scale: 2 });
-    document.head.removeChild(style);
+    const c = await html2canvas(catalogRef.current, {
+      backgroundColor: '#000',
+      scale: 2,
+      useCORS: true,
+      allowTaint: false,
+      logging: false,
+    });
+
+    // 4. Restore everything
+    originalSrcs.forEach(({ img, orig }) => { img.src = orig; });
+    hiddenEls.forEach(({ el, orig }) => { el.style.display = orig; });
+
     return c;
   };
 
