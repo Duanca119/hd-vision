@@ -135,19 +135,30 @@ export default function Home() {
     }
     setSubmitting(true);
     try {
+      // Paso 1: subir imagen
       const fd = new FormData(); fd.append('file', imgFile);
       const ur = await fetch('/api/upload', { method: 'POST', body: fd });
-      if (!ur.ok) throw new Error('upload');
-      const { url } = await ur.json();
+      const uploadData = await ur.json();
+      if (!ur.ok || !uploadData.url) {
+        showToast('❌ Error al subir imagen: ' + (uploadData.error || 'intenta de nuevo'));
+        setSubmitting(false); return;
+      }
+      console.log('Imagen subida:', uploadData.storedIn);
+
+      // Paso 2: guardar producto
       const pr = await fetch('/api/products', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_url: url, description: form.description, gender: form.gender, style: form.style, status: form.status, code: form.code })
+        body: JSON.stringify({ image_url: uploadData.url, description: form.description, gender: form.gender, style: form.style, status: form.status, code: form.code })
       });
-      if (!pr.ok) throw new Error('create');
-      showToast('¡Producto guardado!');
+      if (!pr.ok) {
+        const errData = await pr.json().catch(() => ({ error: 'Error desconocido' }));
+        showToast('❌ Error al guardar: ' + (errData.error || 'intenta de nuevo'));
+        setSubmitting(false); return;
+      }
+      showToast('✅ ¡Producto guardado!');
       await fetchProducts();
       resetUpload(); setScreen('catalogs');
-    } catch (_) { showToast('Error al guardar'); }
+    } catch (err: any) { showToast('❌ Error: ' + (err.message || 'intenta de nuevo')); }
     setSubmitting(false);
   };
 
