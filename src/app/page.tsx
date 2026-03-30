@@ -86,10 +86,46 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [screen, fetchProducts]);
 
-  // Register SW
+  // Register SW and listen for reload messages
   useEffect(() => {
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
+      // Listen for force reload from service worker
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type === 'RELOAD') {
+          window.location.reload();
+        }
+      });
+    }
+  }, []);
+
+  // Force full app update: clear cache + reload fresh
+  const forceUpdate = useCallback(async () => {
+    setSyncing(true);
+    showToast('🔄 Actualizando app al último deploy...');
+    try {
+      // 1. Unregister service worker to clear its control
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) {
+          // Tell SW to clear caches
+          reg.active?.postMessage({ type: 'FORCE_UPDATE' });
+          // Also unregister it
+          await reg.unregister();
+        }
+      }
+      // 2. Clear all caches manually (backup)
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      // 3. Reload with cache-busting to get the latest version
+      setTimeout(() => {
+        window.location.href = window.location.origin + '?t=' + Date.now();
+      }, 500);
+    } catch (_) {
+      // If something fails, just do a hard reload
+      window.location.reload();
     }
   }, []);
 
@@ -274,8 +310,8 @@ export default function Home() {
             </span>
           </div>
           {/* Refresh button - always visible */}
-          <button onClick={syncFromCloud} disabled={syncing} style={{ fontSize: '0.6rem', color: syncing ? '#D4AF37' : '#666', letterSpacing: '0.1em', textTransform: 'uppercase', background: 'none', border: '1px solid ' + (syncing ? '#D4AF37' : '#333'), borderRadius: '1rem', padding: '0.25rem 0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-            {syncing ? '⏳' : '🔄'} {lastRefresh || 'Actualizar'}
+          <button onClick={forceUpdate} disabled={syncing} style={{ fontSize: '0.6rem', color: syncing ? '#D4AF37' : '#666', letterSpacing: '0.1em', textTransform: 'uppercase', background: 'none', border: '1px solid ' + (syncing ? '#D4AF37' : '#333'), borderRadius: '1rem', padding: '0.25rem 0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            {syncing ? '⏳' : '🔄'} Actualizar App
           </button>
         </div>
       </header>
