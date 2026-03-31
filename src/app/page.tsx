@@ -14,17 +14,31 @@ interface Product {
   order: number;
 }
 
-interface CatalogGroup {
-  key: string;
-  label: string;
+interface CatalogSection {
+  title: string;
   products: Product[];
 }
 
+interface CatalogGroup {
+  key: string;
+  label: string;
+  sections: CatalogSection[];
+}
+
 // ========== CONSTANTS ==========
-const GENDERS = ['Hombre', 'Mujer', 'Niño'];
-const STYLES = ['Redonda', 'Cuadrada', 'Aviador', 'Rectangular', 'Cat-Eye', 'Ovalada', 'Wayfarer', 'Clubmaster', 'Media Luna', 'Otro'];
-const DESCRIPTIONS = ['Acetato', 'Acerada', 'Tres Piezas', 'Titanio', 'Aluminio', 'Mixta', 'Inyección'];
+const GENDERS = ['Mujer', 'Hombre', 'Niño', 'Unisex', 'Gafas de Sol'];
+const STYLES = ['Ovalada', 'Cat-Eye', 'Redonda', 'Cuadrada', 'Aviador', 'Rectangular', 'Wayfarer', 'Clubmaster', 'Media Luna', 'Otro'];
+const DESCRIPTIONS = ['Acetato', 'Acerada', 'Mixta', 'Tres Piezas'];
 const STATUSES = ['Disponible', 'Agotado'];
+
+// Orden de estilos para la jerarquía de catálogos
+const STYLE_ORDER = STYLES;
+// Orden de descripciones dentro de cada catálogo primario
+const DESC_ORDER = ['Acerada', 'Acetato', 'Mixta'];
+// Orden de catálogos primarios
+const GENDER_ORDER = ['Mujer', 'Hombre', 'Niño', 'Unisex', 'Gafas de Sol'];
+
+const sortByStyle = (a: Product, b: Product) => STYLE_ORDER.indexOf(a.style) - STYLE_ORDER.indexOf(b.style);
 
 type Screen = 'home' | 'upload' | 'catalogs' | 'detail';
 
@@ -132,17 +146,56 @@ export default function Home() {
     }
   }, []);
 
-  // Catalog grouping
+  // Catalog grouping - jerarquía: catálogo primario por género → secciones por descripción → orden por estilo
   const getCatalogs = (): CatalogGroup[] => {
-    const map: Record<string, CatalogGroup> = {};
-    for (const p of products) {
-      const k = `${p.gender}|${p.description}|${p.style}|${p.status}`;
-      if (!map[k]) {
-        map[k] = { key: k, label: `${p.gender} - ${p.description} - ${p.style} - ${p.status}`, products: [] };
+    const catalogs: CatalogGroup[] = [];
+
+    // 1. Catálogos primarios por género (Acerada, Acetato, Mixta)
+    for (const gender of GENDER_ORDER) {
+      const genderProducts = products.filter(p => p.gender === gender && p.description !== 'Tres Piezas');
+      if (genderProducts.length === 0) continue;
+
+      const sections: CatalogSection[] = [];
+      const usedDescs = new Set<string>();
+
+      for (const desc of DESC_ORDER) {
+        const descProducts = genderProducts.filter(p => p.description === desc);
+        if (descProducts.length > 0) {
+          descProducts.sort(sortByStyle);
+          sections.push({ title: desc + 's', products: descProducts });
+          usedDescs.add(desc);
+        }
       }
-      map[k].products.push(p);
+
+      // Fallback: productos con descripciones antiguas (Titanio, Aluminio, etc.)
+      const others = genderProducts.filter(p => !usedDescs.has(p.description));
+      if (others.length > 0) {
+        others.sort(sortByStyle);
+        sections.push({ title: 'Otros', products: others });
+      }
+
+      if (sections.length > 0) {
+        catalogs.push({ key: gender.toLowerCase().replace(/\s+/g, '-'), label: gender, sections });
+      }
     }
-    return Object.values(map).sort((a, b) => b.products.length - a.products.length);
+
+    // 2. Catálogo Tres Piezas aparte (secciones por género)
+    const tresPiezas = products.filter(p => p.description === 'Tres Piezas');
+    if (tresPiezas.length > 0) {
+      const sections: CatalogSection[] = [];
+      for (const gender of GENDER_ORDER) {
+        const genderTP = tresPiezas.filter(p => p.gender === gender);
+        if (genderTP.length > 0) {
+          genderTP.sort(sortByStyle);
+          sections.push({ title: gender, products: genderTP });
+        }
+      }
+      if (sections.length > 0) {
+        catalogs.push({ key: 'tres-piezas', label: 'Tres Piezas', sections });
+      }
+    }
+
+    return catalogs;
   };
 
   // Upload logic
@@ -348,7 +401,7 @@ export default function Home() {
     const catalogs = getCatalogs();
     const sel = catalogs.find(c => c.key === selectedKey);
     if (!sel) return;
-    const text = `👓 *H&D Vision*\n\n📊 ${sel.label}\n\n${sel.products.map(p => `• ${p.code ? '[' + p.code + '] ' : ''}${p.description} - ${p.gender} - ${p.style}${p.status === 'Agotado' ? ' ❌ Agotado' : ''}`).join('\n')}`;
+    const text = `👓 *H&D Vision*\n\n📊 *${sel.label}*\n\n${sel.sections.map(s => `─── ${s.title} ───\n${s.products.map(p => `• ${p.code ? '[' + p.code + '] ' : ''}${p.description} - ${p.style}${p.status === 'Agotado' ? ' ❌ Agotado' : ''}`).join('\n')}`).join('\n\n')}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
@@ -480,25 +533,29 @@ export default function Home() {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {getCatalogs().map(cat => (
+                {getCatalogs().map(cat => {
+                  const allProds = cat.sections.flatMap(s => s.products);
+                  const totalProducts = allProds.length;
+                  return (
                   <button key={cat.key} onClick={() => { setSelectedKey(cat.key); setEditMode(false); setScreen('detail'); }} style={{ width: '100%', padding: '1rem', borderRadius: '1rem', background: '#0A0A0A', border: '1px solid #1A1A1A', display: 'flex', alignItems: 'center', gap: '1rem', cursor: 'pointer', textAlign: 'left' }}>
                     <div style={{ width: '3.5rem', height: '3.5rem', borderRadius: '0.75rem', overflow: 'hidden', background: '#111', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1px', flexShrink: 0 }}>
-                      {cat.products.slice(0, 4).map((p, i) => <div key={i} style={{ aspectRatio: '1', overflow: 'hidden', background: '#111', position: 'relative' }}>
+                      {allProds.slice(0, 4).map((p, i) => <div key={i} style={{ aspectRatio: '1', overflow: 'hidden', background: '#111', position: 'relative' }}>
                         <img src={p.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         {p.status === 'Agotado' && <div style={{ position: 'absolute', inset: 0, background: 'rgba(185,28,28,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.4rem', color: '#FFF', fontWeight: 700 }}>AGOTADO</div>}
                       </div>)}
-                      {Array.from({ length: Math.max(0, 4 - cat.products.length) }).map((_, i) => <div key={`e${i}`} style={{ aspectRatio: '1', background: '#111' }} />)}
+                      {Array.from({ length: Math.max(0, 4 - totalProducts) }).map((_, i) => <div key={`e${i}`} style={{ aspectRatio: '1', background: '#111' }} />)}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cat.label}</p>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
-                        <span style={{ fontSize: '0.6rem', padding: '0.1rem 0.4rem', borderRadius: '1rem', background: cat.products[0]?.status === 'Disponible' ? '#065F46' : '#7F1D1D', color: '#D1FAE5' }}>{cat.products[0]?.status}</span>
-                        <span style={{ fontSize: '0.65rem', color: '#888' }}>{cat.products.length} gafa{cat.products.length > 1 ? 's' : ''}</span>
+                        <span style={{ fontSize: '0.6rem', padding: '0.1rem 0.4rem', borderRadius: '1rem', background: '#065F46', color: '#D1FAE5' }}>{cat.sections.length} {cat.sections.length === 1 ? 'sección' : 'secciones'}</span>
+                        <span style={{ fontSize: '0.65rem', color: '#888' }}>{totalProducts} gafa{totalProducts > 1 ? 's' : ''}</span>
                       </div>
                     </div>
                     <span style={{ color: '#555', fontSize: '1rem' }}>›</span>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -510,7 +567,7 @@ export default function Home() {
               <div style={{ maxWidth: '32rem', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ flex: 1, marginRight: '0.5rem' }}>
                   <p style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFF', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedCatalog.label}</p>
-                  <p style={{ fontSize: '0.65rem', color: '#888' }}>{selectedCatalog.products.length} productos</p>
+                  <p style={{ fontSize: '0.65rem', color: '#888' }}>{selectedCatalog.sections.reduce((sum, s) => sum + s.products.length, 0)} productos</p>
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <button onClick={() => setEditMode(!editMode)} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: editMode ? '#D4AF37' : '#1A1A1A', border: editMode ? 'none' : '1px solid #333', color: editMode ? '#000' : '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>
@@ -531,9 +588,19 @@ export default function Home() {
                 <p style={{ fontSize: '0.85rem', color: '#D4AF37', fontWeight: 500, marginTop: '0.75rem' }}>{selectedCatalog.label}</p>
               </div>
 
-              {/* Product Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
-                {selectedCatalog.products.map(p => (
+              {/* Sections with titles */}
+              {selectedCatalog.sections.map((section, sIdx) => (
+                <div key={section.title}>
+                  {/* Section title */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: sIdx > 0 ? '2rem' : '0', marginBottom: '1rem' }}>
+                    <div style={{ flex: 1, height: '1px', background: 'linear-gradient(to right, rgba(212,175,55,0.4), transparent)' }} />
+                    <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#D4AF37', letterSpacing: '0.1em', textTransform: 'uppercase', whiteSpace: 'nowrap', margin: 0 }}>{section.title}</h3>
+                    <div style={{ flex: 1, height: '1px', background: 'linear-gradient(to left, rgba(212,175,55,0.4), transparent)' }} />
+                  </div>
+
+                  {/* Product Grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+                    {section.products.map(p => (
                   <div key={p.id} style={{ borderRadius: '1rem', overflow: 'hidden', border: '1px solid #1A1A1A', background: '#0A0A0A', position: 'relative' }}>
                     {/* Action buttons on each card - always visible */}
                     {editMode && (
@@ -600,6 +667,8 @@ export default function Home() {
                   </div>
                 ))}
               </div>
+                </div>
+              ))}
 
               {/* Footer */}
               <div style={{ textAlign: 'center', marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #1A1A1A' }}>
