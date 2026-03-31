@@ -242,7 +242,7 @@ export default function Home() {
     } catch (_) { showToast('Error al cambiar estado'); }
   };
 
-  // Helper: convert Cloudinary URLs to local proxy URLs for html2canvas CORS
+  // Helper: get proxied URL for CORS-safe image loading
   const getProxiedUrl = (url: string) => {
     if (!url) return url;
     if (url.startsWith('/api/image-proxy')) return url;
@@ -250,11 +250,11 @@ export default function Home() {
     return '/api/image-proxy?url=' + encodeURIComponent(url);
   };
 
-  // Export helper: hide buttons + proxy images for CORS
+  // Export helper: hide buttons + load images via proxy for CORS
   const captureCatalog = async (): Promise<HTMLCanvasElement | null> => {
     if (!catalogRef.current) return null;
 
-    // 1. Hide all no-export elements by setting display none directly on DOM
+    // 1. Hide all no-export elements on DOM
     const hiddenEls: { el: HTMLElement; orig: string }[] = [];
     catalogRef.current.querySelectorAll('.no-export').forEach(el => {
       const htmlEl = el as HTMLElement;
@@ -262,39 +262,61 @@ export default function Home() {
       htmlEl.style.display = 'none';
     });
 
-    // 2. Swap image srcs to proxied URLs for CORS
+    // 2. Preload ALL images through proxy, then swap src on DOM
     const imgs = catalogRef.current.querySelectorAll('img');
     const originalSrcs: { img: HTMLImageElement; orig: string }[] = [];
-    const proxyPromises: Promise<void>[] = [];
+    const loadPromises: Promise<void>[] = [];
+
     imgs.forEach(img => {
       const htmlImg = img as HTMLImageElement;
-      const originalSrc = htmlImg.src;
-      originalSrcs.push({ img: htmlImg, orig: originalSrc });
-      const proxyUrl = getProxiedUrl(originalSrc);
-      if (proxyUrl !== originalSrc) {
+      const origSrc = htmlImg.src;
+      originalSrcs.push({ img: htmlImg, orig: origSrc });
+
+      // Ensure crossOrigin is set
+      htmlImg.crossOrigin = 'anonymous';
+
+      const proxyUrl = getProxiedUrl(origSrc);
+      if (proxyUrl !== origSrc) {
         const p = new Promise<void>((resolve) => {
-          const testImg = new Image();
-          testImg.crossOrigin = 'anonymous';
-          testImg.onload = () => { htmlImg.src = proxyUrl; resolve(); };
-          testImg.onerror = () => { resolve(); };
-          testImg.src = proxyUrl;
+          // Preload through proxy
+          const preloader = new Image();
+          preloader.crossOrigin = 'anonymous';
+          preloader.onload = () => {
+            // Only swap once preloaded successfully
+            htmlImg.src = proxyUrl;
+            // Wait for DOM img to repaint
+            htmlImg.decode().then(() => resolve()).catch(() => resolve());
+          };
+          preloader.onerror = () => {
+            console.warn('Proxy failed for:', origSrc);
+            // Try direct as fallback
+            htmlImg.crossOrigin = 'anonymous';
+            resolve();
+          };
+          preloader.src = proxyUrl;
         });
-        proxyPromises.push(p);
+        loadPromises.push(p);
+      } else {
+        // data: URL - just ensure it's loaded
+        const p = htmlImg.decode().then(() => {}).catch(() => {});
+        loadPromises.push(p as Promise<void>);
       }
     });
 
-    // Wait for all proxy images to load
-    await Promise.all(proxyPromises);
-    await new Promise(r => setTimeout(r, 300));
+    // Wait for all images to be preloaded and swapped
+    await Promise.all(loadPromises);
+    // Extra time for browser to repaint
+    await new Promise(r => setTimeout(r, 500));
 
-    // 3. Capture with CORS settings
+    // 3. Capture
     const { default: html2canvas } = await import('html2canvas-pro' as any);
     const c = await html2canvas(catalogRef.current, {
       backgroundColor: '#000',
       scale: 2,
       useCORS: true,
-      allowTaint: false,
+      allowTaint: true,
       logging: false,
+      imageTimeout: 15000,
     });
 
     // 4. Restore everything
@@ -531,7 +553,7 @@ export default function Home() {
 
                     {/* Image with watermark */}
                     <div style={{ aspectRatio: '1', overflow: 'hidden', background: '#111', position: 'relative' }}>
-                      <img src={p.image_url} alt={p.code || p.description} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      <img crossOrigin="anonymous" src={p.image_url} alt={p.code || p.description} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                       {/* AGOTADO watermark - visible in app AND exports */}
                       {p.status === 'Agotado' && (
                         <div style={{
