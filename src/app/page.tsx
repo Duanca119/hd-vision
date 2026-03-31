@@ -408,35 +408,129 @@ export default function Home() {
 
   const exportPDF = async () => {
     try {
+      const sel = getCatalogs().find(c => c.key === selectedKey);
+      if (!sel) { showToast('No hay catálogo seleccionado'); return; }
       showToast('📄 Generando PDF completo...');
-      const c = await captureCatalog();
-      if (!c) return;
 
-      const { jsPDF } = await import('jspdf' as any);
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pageW = 210;
-      const pageH = 297;
-      const margin = 5;
-      const usableW = pageW - margin * 2;
-      const usableH = pageH - margin * 2;
+      // 1. Preload all images as blob URLs
+      const allProducts = sel.sections.flatMap(s => s.products);
+      const blobMap: Record<string, string> = {};
+      await Promise.all(allProducts.map(async p => {
+        if (!p.image_url || p.image_url.startsWith('data:')) return;
+        try {
+          const res = await fetch('/api/image-proxy?url=' + encodeURIComponent(p.image_url));
+          if (res.ok) {
+            const blob = await res.blob();
+            blobMap[p.id] = URL.createObjectURL(blob);
+          }
+        } catch {}
+      }));
 
-      // Calculate dimensions
-      const ratio = c.width / c.height;
-      const imgDisplayW = usableW;
-      const imgDisplayH = usableW / ratio;
+      // 2. Build page data: each page = 4 products (2x2)
+      type PageItem = { product: Product; blobUrl: string; sectionTitle: string };
+      const pages: { items: PageItem[]; isFirst: boolean; sectionTitle: string }[] = [];
+      let currentPage: PageItem[] = [];
+      let currentSection = '';
+      let firstPage = true;
 
-      // Split into pages
-      const totalPages = Math.ceil(imgDisplayH / usableH);
-      for (let i = 0; i < totalPages; i++) {
-        if (i > 0) pdf.addPage();
-        // Offset Y for each page
-        const yOffset = -(i * usableH);
-        pdf.addImage(c.toDataURL('image/png'), 'PNG', margin, margin + yOffset, imgDisplayW, imgDisplayH);
+      for (const section of sel.sections) {
+        for (const p of section.products) {
+          const blobUrl = blobMap[p.id] || p.image_url;
+          if (currentPage.length === 4) {
+            pages.push({ items: currentPage, isFirst: firstPage, sectionTitle: currentSection });
+            firstPage = false;
+            currentPage = [];
+          }
+          if (currentPage.length === 0) currentSection = section.title;
+          currentPage.push({ product: p, blobUrl, sectionTitle: section.title });
+        }
+      }
+      if (currentPage.length > 0) {
+        pages.push({ items: currentPage, isFirst: firstPage, sectionTitle: currentSection });
       }
 
-      pdf.save('HD-Vision-catalogo.pdf');
-      showToast(`✅ PDF descargado (${totalPages} páginas)`);
-    } catch (_) { showToast('Error al exportar PDF'); }
+      // 3. Render each page as HTML, capture with html2canvas
+      const { default: html2canvas } = await import('html2canvas-pro' as any);
+      const { jsPDF } = await import('jspdf' as any);
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const container = document.createElement('div');
+      container.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:794px;z-index:-1;background:#000;';
+      document.body.appendChild(container);
+
+      try {
+        for (let pi = 0; pi < pages.length; pi++) {
+          const page = pages[pi];
+          const sectionChanged = page.items.some(i => i.sectionTitle !== page.sectionTitle);
+
+          container.innerHTML = `
+            <div style="width:794px;padding:30px 20px 20px;background:#000;color:#FFF;font-family:system-ui,sans-serif;box-sizing:border-box;">
+              ${page.isFirst ? `
+              <div style="text-align:center;margin-bottom:20px;">
+                <h1 style="font-size:32px;font-weight:700;color:#D4AF37;margin:0;letter-spacing:2px;">H&D Vision</h1>
+                <div style="width:120px;height:1px;background:linear-gradient(to right,transparent,#D4AF37,transparent);margin:8px auto;"></div>
+                <p style="font-size:11px;color:#666;letter-spacing:3px;text-transform:uppercase;margin:0;">Catálogo Profesional</p>
+                <p style="font-size:14px;color:#D4AF37;margin-top:10px;">${sel.label}</p>
+              </div>` : ''}
+
+              ${!page.isFirst && sectionChanged ? `
+              <div style="text-align:center;margin-bottom:16px;">
+                <p style="font-size:13px;color:#D4AF37;font-weight:700;letter-spacing:2px;text-transform:uppercase;">${page.sectionTitle}</p>
+                <div style="width:80px;height:1px;background:linear-gradient(to right,transparent,#D4AF37,transparent);margin:6px auto;"></div>
+              </div>` : ''}
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                ${page.items.map(item => `
+                <div style="border-radius:10px;overflow:hidden;border:1px solid #1A1A1A;background:#0A0A0A;">
+                  <div style="aspect-ratio:1;overflow:hidden;background:#111;position:relative;">
+                    <img src="${item.blobUrl}" style="width:100%;height:100%;object-fit:contain;display:block;" />
+                    ${item.product.status === 'Agotado' ? `
+                    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);pointer-events:none;">
+                      <div style="transform:rotate(-30deg);padding:4px 18px;border-radius:5px;background:rgba(185,28,28,0.85);color:#FFF;font-weight:800;font-size:13px;letter-spacing:2px;text-transform:uppercase;border:2px solid rgba(255,255,255,0.3);">AGOTADO</div>
+                    </div>` : ''}
+                  </div>
+                  <div style="padding:6px 8px;">
+                    <p style="font-size:11px;font-weight:700;color:#FFF;margin:0;text-transform:capitalize;">
+                      ${item.product.code ? '<span style=\"color:#D4AF37\">[' + item.product.code + ']</span> ' : ''}${item.product.description}
+                    </p>
+                    <p style="font-size:9px;color:#888;margin:2px 0 0;text-transform:capitalize;">${item.product.gender} · ${item.product.style}</p>
+                  </div>
+                </div>`).join('')}
+              </div>
+
+              <div style="text-align:center;margin-top:16px;padding-top:12px;border-top:1px solid #1A1A1A;">
+                <p style="font-size:10px;color:#D4AF37;letter-spacing:2px;margin:0;">H&D Vision</p>
+                <p style="font-size:8px;color:#555;margin:3px 0 0;">Catálogo de Gafas Profesional</p>
+                <p style="font-size:7px;color:#333;margin:3px 0 0;">Página ${pi + 1} de ${pages.length}</p>
+              </div>
+            </div>`;
+
+          // Wait for images to load
+          const imgs = container.querySelectorAll('img');
+          await Promise.all(Array.from(imgs).map(img => {
+            if (img.complete) return Promise.resolve();
+            return new Promise(r => { img.onload = r; img.onerror = r; });
+          }));
+          await new Promise(r => setTimeout(r, 200));
+
+          const canvas = await html2canvas(container, {
+            backgroundColor: '#000', scale: 2, useCORS: true, allowTaint: true, logging: false, imageTimeout: 10000,
+          });
+
+          if (pi > 0) pdf.addPage();
+          const imgData = canvas.toDataURL('image/png');
+          pdf.addImage(imgData, 'PNG', 0, 0, 210, (canvas.height * 210) / canvas.width);
+        }
+
+        pdf.save('HD-Vision-catalogo.pdf');
+        showToast(`✅ PDF descargado (${pages.length} páginas)`);
+      } finally {
+        document.body.removeChild(container);
+        Object.values(blobMap).forEach(u => URL.revokeObjectURL(u));
+      }
+    } catch (err: any) {
+      console.error('PDF error:', err);
+      showToast('Error al exportar PDF');
+    }
   };
 
   const shareWhatsApp = () => {
