@@ -242,15 +242,21 @@ export default function Home() {
     } catch (_) { showToast('Error al cambiar estado'); }
   };
 
-  // Helper: get proxied URL for CORS-safe image loading
-  const getProxiedUrl = (url: string) => {
-    if (!url) return url;
-    if (url.startsWith('/api/image-proxy')) return url;
-    if (url.startsWith('data:')) return url;
-    return '/api/image-proxy?url=' + encodeURIComponent(url);
+  // Helper: convert image URL to same-origin blob URL via proxy (no CORS issues)
+  const imageToBlobUrl = async (url: string): Promise<string> => {
+    if (!url || url.startsWith('data:')) return url;
+    try {
+      const proxyUrl = '/api/image-proxy?url=' + encodeURIComponent(url);
+      const res = await fetch(proxyUrl);
+      if (!res.ok) return url;
+      const blob = await res.blob();
+      return URL.createObjectURL(blob);
+    } catch {
+      return url;
+    }
   };
 
-  // Export helper: hide buttons + load images via proxy for CORS
+  // Export helper: hide buttons + convert images to blob URLs for clean capture
   const captureCatalog = async (): Promise<HTMLCanvasElement | null> => {
     if (!catalogRef.current) return null;
 
@@ -262,53 +268,33 @@ export default function Home() {
       htmlEl.style.display = 'none';
     });
 
-    // 2. Preload ALL images through proxy, then swap src on DOM
+    // 2. Convert all external images to blob URLs (same-origin, no CORS needed)
     const imgs = catalogRef.current.querySelectorAll('img');
-    const originalSrcs: { img: HTMLImageElement; orig: string }[] = [];
-    const loadPromises: Promise<void>[] = [];
+    const originalSrcs: { img: HTMLImageElement; orig: string; blobUrl?: string }[] = [];
+    const blobPromises: Promise<void>[] = [];
 
     imgs.forEach(img => {
       const htmlImg = img as HTMLImageElement;
       const origSrc = htmlImg.src;
-      originalSrcs.push({ img: htmlImg, orig: origSrc });
+      const entry: { img: HTMLImageElement; orig: string; blobUrl?: string } = { img: htmlImg, orig: origSrc };
+      originalSrcs.push(entry);
 
-      // Ensure crossOrigin is set
-      htmlImg.crossOrigin = 'anonymous';
-
-      const proxyUrl = getProxiedUrl(origSrc);
-      if (proxyUrl !== origSrc) {
-        const p = new Promise<void>((resolve) => {
-          // Preload through proxy
-          const preloader = new Image();
-          preloader.crossOrigin = 'anonymous';
-          preloader.onload = () => {
-            // Only swap once preloaded successfully
-            htmlImg.src = proxyUrl;
-            // Wait for DOM img to repaint
-            htmlImg.decode().then(() => resolve()).catch(() => resolve());
-          };
-          preloader.onerror = () => {
-            console.warn('Proxy failed for:', origSrc);
-            // Try direct as fallback
-            htmlImg.crossOrigin = 'anonymous';
-            resolve();
-          };
-          preloader.src = proxyUrl;
+      if (origSrc && !origSrc.startsWith('data:')) {
+        const p = imageToBlobUrl(origSrc).then(blobUrl => {
+          if (blobUrl !== origSrc) {
+            entry.blobUrl = blobUrl;
+            htmlImg.src = blobUrl;
+          }
         });
-        loadPromises.push(p);
-      } else {
-        // data: URL - just ensure it's loaded
-        const p = htmlImg.decode().then(() => {}).catch(() => {});
-        loadPromises.push(p as Promise<void>);
+        blobPromises.push(p);
       }
     });
 
-    // Wait for all images to be preloaded and swapped
-    await Promise.all(loadPromises);
-    // Extra time for browser to repaint
+    // Wait for all images to be converted and repainted
+    await Promise.all(blobPromises);
     await new Promise(r => setTimeout(r, 500));
 
-    // 3. Capture
+    // 3. Capture (blob URLs are same-origin, so no CORS issues at all)
     const { default: html2canvas } = await import('html2canvas-pro' as any);
     const c = await html2canvas(catalogRef.current, {
       backgroundColor: '#000',
@@ -319,8 +305,11 @@ export default function Home() {
       imageTimeout: 15000,
     });
 
-    // 4. Restore everything
-    originalSrcs.forEach(({ img, orig }) => { img.src = orig; });
+    // 4. Restore original srcs and free blob URLs
+    originalSrcs.forEach(({ img, orig, blobUrl }) => {
+      img.src = orig;
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    });
     hiddenEls.forEach(({ el, orig }) => { el.style.display = orig; });
 
     return c;
@@ -553,7 +542,7 @@ export default function Home() {
 
                     {/* Image with watermark */}
                     <div style={{ aspectRatio: '1', overflow: 'hidden', background: '#111', position: 'relative' }}>
-                      <img crossOrigin="anonymous" src={p.image_url} alt={p.code || p.description} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                      <img src={p.image_url} alt={p.code || p.description} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
                       {/* AGOTADO watermark - visible in app AND exports */}
                       {p.status === 'Agotado' && (
                         <div style={{
