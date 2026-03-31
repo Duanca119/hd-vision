@@ -52,7 +52,23 @@ export default function Home() {
   const [toast, setToast] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<string>('');
+  const [isReadOnly, setIsReadOnly] = useState(false);
   const catalogRef = useRef<HTMLDivElement>(null);
+
+  // Detect read-only mode from URL params
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('share') === 'true' || params.get('readonly') === 'true') {
+        setIsReadOnly(true);
+        // Auto-navigate to catalog if specified in URL
+        const catParam = params.get('catalog');
+        if (catParam) {
+          setSelectedKey(catParam);
+        }
+      }
+    }
+  }, []);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -92,6 +108,13 @@ export default function Home() {
 
   // Initial load from Supabase
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
+
+  // Auto-navigate to catalog detail when in read-only mode and catalog is set
+  useEffect(() => {
+    if (isReadOnly && selectedKey && products.length > 0 && screen === 'home') {
+      setScreen('detail');
+    }
+  }, [isReadOnly, selectedKey, products.length, screen]);
 
   // Auto-refresh: poll every 3 seconds when not on upload screen
   useEffect(() => {
@@ -385,15 +408,34 @@ export default function Home() {
 
   const exportPDF = async () => {
     try {
+      showToast('📄 Generando PDF completo...');
       const c = await captureCatalog();
       if (!c) return;
+
       const { jsPDF } = await import('jspdf' as any);
-      const img = c.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const w = 210; const h = (c.height * w) / c.width;
-      pdf.addImage(img, 'PNG', 0, 0, w, h);
+      const pageW = 210;
+      const pageH = 297;
+      const margin = 5;
+      const usableW = pageW - margin * 2;
+      const usableH = pageH - margin * 2;
+
+      // Calculate dimensions
+      const ratio = c.width / c.height;
+      const imgDisplayW = usableW;
+      const imgDisplayH = usableW / ratio;
+
+      // Split into pages
+      const totalPages = Math.ceil(imgDisplayH / usableH);
+      for (let i = 0; i < totalPages; i++) {
+        if (i > 0) pdf.addPage();
+        // Offset Y for each page
+        const yOffset = -(i * usableH);
+        pdf.addImage(c.toDataURL('image/png'), 'PNG', margin, margin + yOffset, imgDisplayW, imgDisplayH);
+      }
+
       pdf.save('HD-Vision-catalogo.pdf');
-      showToast('PDF descargado');
+      showToast(`✅ PDF descargado (${totalPages} páginas)`);
     } catch (_) { showToast('Error al exportar PDF'); }
   };
 
@@ -401,8 +443,11 @@ export default function Home() {
     const catalogs = getCatalogs();
     const sel = catalogs.find(c => c.key === selectedKey);
     if (!sel) return;
-    const text = `👓 *H&D Vision*\n\n📊 *${sel.label}*\n\n${sel.sections.map(s => `─── ${s.title} ───\n${s.products.map(p => `• ${p.code ? '[' + p.code + '] ' : ''}${p.description} - ${p.style}${p.status === 'Agotado' ? ' ❌ Agotado' : ''}`).join('\n')}`).join('\n\n')}`;
+    const baseUrl = window.location.origin + window.location.pathname;
+    const shareLink = `${baseUrl}?share=true&catalog=${encodeURIComponent(sel.key)}`;
+    const text = `👓 *H&D Vision*\n\n📊 *${sel.label}*\n\n👀 Mira nuestro catálogo completo aquí:\n${shareLink}\n\n${sel.sections.map(s => `─── ${s.title} (${s.products.length}) ───`).join('\n')}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    showToast('💬 Link enviado por WhatsApp');
   };
 
   const selectedCatalog = getCatalogs().find(c => c.key === selectedKey);
@@ -422,10 +467,12 @@ export default function Home() {
               <span style={{ color: '#FFF', marginLeft: '0.25rem' }}>Vision</span>
             </span>
           </div>
-          {/* Refresh button - always visible */}
+          {/* Refresh button - hide in read-only mode */}
+          {!isReadOnly && (
           <button onClick={forceUpdate} disabled={syncing} style={{ fontSize: '0.6rem', color: syncing ? '#D4AF37' : '#666', letterSpacing: '0.1em', textTransform: 'uppercase', background: 'none', border: '1px solid ' + (syncing ? '#D4AF37' : '#333'), borderRadius: '1rem', padding: '0.25rem 0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             {syncing ? '⏳' : '🔄'} Actualizar App
           </button>
+          )}
         </div>
       </header>
 
@@ -436,7 +483,7 @@ export default function Home() {
             <div style={{ width: '2.5rem', height: '2.5rem', border: '2px solid #D4AF37', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
             <span style={{ color: '#D4AF37', fontSize: '0.8rem' }}>CARGANDO DESDE LA NUBE...</span>
           </div>
-        ) : screen === 'home' ? (
+        ) : !isReadOnly && screen === 'home' ? (
           /* ===== HOME ===== */
           <div style={{ maxWidth: '32rem', margin: '0 auto', padding: '1.5rem 1rem', display: 'flex', flexDirection: 'column', alignItems: 'center', minHeight: 'calc(100vh - 3.5rem)', justifyContent: 'center', gap: '2rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem' }}>
@@ -459,7 +506,7 @@ export default function Home() {
               <button onClick={() => setScreen('catalogs')} style={{ width: '100%', padding: '1rem', borderRadius: '1rem', background: '#1A1A1A', border: '1px solid rgba(212,175,55,0.3)', color: '#D4AF37', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer', letterSpacing: '0.05em' }}>📖 Ver Catálogos{getCatalogs().length > 0 && <span style={{ marginLeft: 'auto', fontSize: '0.7rem', background: 'rgba(212,175,55,0.15)', padding: '0.2rem 0.5rem', borderRadius: '1rem' }}>{getCatalogs().length}</span>}</button>
             </div>
           </div>
-        ) : screen === 'upload' ? (
+        ) : !isReadOnly && screen === 'upload' ? (
           /* ===== UPLOAD ===== */
           <div style={{ maxWidth: '32rem', margin: '0 auto', padding: '1.5rem 1rem' }}>
             {step === 'pick' ? (
@@ -517,7 +564,7 @@ export default function Home() {
               </div>
             )}
           </div>
-        ) : screen === 'catalogs' ? (
+        ) : !isReadOnly && screen === 'catalogs' ? (
           /* ===== CATALOGS LIST ===== */
           <div style={{ maxWidth: '32rem', margin: '0 auto', padding: '1.5rem 1rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
@@ -570,9 +617,9 @@ export default function Home() {
                   <p style={{ fontSize: '0.65rem', color: '#888' }}>{selectedCatalog.sections.reduce((sum, s) => sum + s.products.length, 0)} productos</p>
                 </div>
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
-                  <button onClick={() => setEditMode(!editMode)} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: editMode ? '#D4AF37' : '#1A1A1A', border: editMode ? 'none' : '1px solid #333', color: editMode ? '#000' : '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>
-                  <button onClick={exportPNG} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#1A1A1A', border: '1px solid #333', color: '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🖼</button>
-                  <button onClick={exportPDF} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#1A1A1A', border: '1px solid #333', color: '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>📄</button>
+                  {!isReadOnly && <button onClick={() => setEditMode(!editMode)} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: editMode ? '#D4AF37' : '#1A1A1A', border: editMode ? 'none' : '1px solid #333', color: editMode ? '#000' : '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>}
+                  {!isReadOnly && <button onClick={exportPNG} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#1A1A1A', border: '1px solid #333', color: '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🖼</button>}
+                  {!isReadOnly && <button onClick={exportPDF} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#1A1A1A', border: '1px solid #333', color: '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>📄</button>}
                   <button onClick={shareWhatsApp} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#059669', border: 'none', color: '#FFF', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>💬</button>
                 </div>
               </div>
@@ -677,15 +724,17 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Floating buttons */}
+            {/* Floating buttons - hidden in read-only mode */}
+            {!isReadOnly && (
             <div style={{ position: 'fixed', bottom: '1rem', left: '50%', transform: 'translateX(-50%)', zIndex: 30, display: 'flex', gap: '0.5rem' }}>
               <button onClick={exportPNG} style={{ padding: '0.7rem 1rem', borderRadius: '2rem', background: 'linear-gradient(135deg, #D4AF37, #B8960F)', color: '#000', fontWeight: 600, fontSize: '0.75rem', border: 'none', cursor: 'pointer', boxShadow: '0 4px 16px rgba(212,175,55,0.3)' }}>📥 PNG</button>
               <button onClick={exportPDF} style={{ padding: '0.7rem 1rem', borderRadius: '2rem', background: '#1A1A1A', border: '1px solid rgba(212,175,55,0.3)', color: '#D4AF37', fontWeight: 600, fontSize: '0.75rem', cursor: 'pointer' }}>📥 PDF</button>
               <button onClick={shareWhatsApp} style={{ padding: '0.7rem 1rem', borderRadius: '2rem', background: '#059669', color: '#FFF', fontWeight: 600, fontSize: '0.75rem', border: 'none', cursor: 'pointer' }}>💬 WhatsApp</button>
             </div>
+            )}
 
-            {/* Edit Modal - Full product editor */}
-            {editingId && (
+            {/* Edit Modal - hidden in read-only mode */}
+            {!isReadOnly && editingId && (
               <div onClick={() => setEditingId(null)} style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
                 <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: '32rem', background: '#0A0A0A', borderRadius: '1.5rem 1.5rem 0 0', padding: '1.5rem', maxHeight: '85vh', overflow: 'auto', borderTop: '1px solid rgba(212,175,55,0.2)' }}>
                   {/* Modal header */}
