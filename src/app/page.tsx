@@ -89,7 +89,10 @@ export default function Home() {
   // Register SW and listen for reload messages
   useEffect(() => {
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(reg => {
+        // Check for updates immediately every time app opens
+        reg.update();
+      }).catch(() => {});
       // Listen for force reload from service worker
       navigator.serviceWorker.addEventListener('message', (event) => {
         if (event.data?.type === 'RELOAD') {

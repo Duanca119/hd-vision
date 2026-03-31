@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hd-vision-v4';
+const CACHE_NAME = 'hd-vision-v5';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/icon-192.png',
@@ -6,15 +6,18 @@ const STATIC_ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
+  // Skip waiting immediately - don't wait for old SW to die
+  self.skipWaiting();
+  // Don't pre-cache anything on install - let network-first handle it
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(STATIC_ASSETS);
     })
   );
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
+  // Delete ALL old caches immediately
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
@@ -24,6 +27,7 @@ self.addEventListener('activate', (event) => {
       );
     })
   );
+  // Take control of all pages immediately
   self.clients.claim();
 });
 
@@ -33,27 +37,28 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // Skip API calls - always fresh from network
+  // API calls: always network, never cache
   if (request.url.includes('/api/')) {
     event.respondWith(fetch(request));
     return;
   }
 
-  // For ALL page/JS/CSS requests: NETWORK FIRST (always get latest version)
-  // This ensures new deploys are picked up immediately
+  // Page navigation & app code: NETWORK FIRST always
+  // This is the key: pages and JS/CSS always come from network
   if (
     request.mode === 'navigate' ||
     request.url.endsWith('/') ||
-    request.url.includes('.html') ||
+    request.url.endsWith('/index.html') ||
     request.url.includes('_next/static') ||
     request.url.includes('.js') ||
-    request.url.includes('.css')
+    request.url.includes('.css') ||
+    request.url === self.registration.scope
   ) {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // Cache successful responses for offline use
           if (response && response.status === 200) {
+            // Cache in background for offline fallback
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => {
               cache.put(request, clone);
@@ -62,7 +67,7 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => {
-          // If network fails, serve from cache (offline fallback)
+          // Only use cache if completely offline
           return caches.match(request).then((cached) => {
             return cached || caches.match('/');
           });
@@ -71,7 +76,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For static assets (icons, manifest): cache first, network fallback
+  // Icons/manifest: cache first
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
@@ -88,16 +93,12 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// Listen for messages from the app to force update
+// Force update message handler
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'FORCE_UPDATE') {
-    // Delete all caches
     caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((name) => caches.delete(name))
-      );
+      return Promise.all(cacheNames.map((name) => caches.delete(name)));
     }).then(() => {
-      // Tell all clients to reload
       self.clients.matchAll().then((clients) => {
         clients.forEach((client) => {
           client.postMessage({ type: 'RELOAD' });
@@ -105,4 +106,14 @@ self.addEventListener('message', (event) => {
       });
     });
   }
+
+  // When a new SW takes over, skip waiting
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
+
+// Auto-check for SW updates every 60 seconds
+setInterval(() => {
+  self.registration.update();
+}, 60000);
