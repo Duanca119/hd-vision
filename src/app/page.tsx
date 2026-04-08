@@ -553,7 +553,7 @@ export default function Home() {
       <header style={{ position: 'sticky', top: 0, zIndex: 50, background: 'rgba(0,0,0,0.95)', borderBottom: '1px solid rgba(212,175,55,0.2)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}>
         <div style={{ maxWidth: '32rem', margin: '0 auto', padding: '0 1rem', height: '3.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            {screen !== 'home' && (
+            {screen !== 'home' && !isReadOnly && (
               <button onClick={() => { setEditMode(false); setEditingId(null); setScreen(screen === 'detail' ? 'catalogs' : 'home'); }} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#1A1A1A', border: '1px solid #333', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#D4AF37', fontSize: '1rem', cursor: 'pointer' }}>←</button>
             )}
             <span style={{ fontSize: '1.1rem', fontWeight: 700 }}>
@@ -714,7 +714,8 @@ export default function Home() {
                   {!isReadOnly && <button onClick={() => setEditMode(!editMode)} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: editMode ? '#D4AF37' : '#1A1A1A', border: editMode ? 'none' : '1px solid #333', color: editMode ? '#000' : '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>}
                   {!isReadOnly && <button onClick={exportPNG} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#1A1A1A', border: '1px solid #333', color: '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🖼</button>}
                   {!isReadOnly && <button onClick={exportPDF} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#1A1A1A', border: '1px solid #333', color: '#D4AF37', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>📄</button>}
-                  <button onClick={shareWhatsApp} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#059669', border: 'none', color: '#FFF', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>💬</button>
+                  {!isReadOnly && <button onClick={shareWhatsApp} style={{ width: '2.25rem', height: '2.25rem', borderRadius: '50%', background: '#059669', border: 'none', color: '#FFF', cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>💬</button>}
+                  {isReadOnly && <div style={{ fontSize: '0.55rem', color: '#555', letterSpacing: '0.1em', textTransform: 'uppercase' }}>👁 Solo lectura</div>}
                 </div>
               </div>
             </div>
