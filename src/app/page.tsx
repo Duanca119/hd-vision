@@ -778,7 +778,8 @@ export default function Home() {
                       <p style={{ fontSize: '0.6rem', color: '#888', marginTop: '0.15rem', textTransform: 'capitalize' }}>{p.gender} • {p.style}</p>
                     </div>
 
-                    {/* Disponible / Agotado buttons - hidden in exports */}
+                    {/* Disponible / Agotado buttons - hidden in exports AND read-only mode */}
+                    {!isReadOnly && (
                     <div className="no-export" style={{ display: 'flex', gap: '0.35rem', padding: '0 0.6rem 0.6rem' }}>
                       <button
                         onClick={() => { if (p.status !== 'Disponible') toggleStatus(p); }}
@@ -805,6 +806,7 @@ export default function Home() {
                         }}
                       >❌ Agotado</button>
                     </div>
+                    )}
                   </div>
                 ))}
               </div>
